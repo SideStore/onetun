@@ -22,3 +22,7 @@ rand = "0.8.4"
 nom = "7"
 async-trait = "0.1.51"
 priority-queue = "1.2.0"
+
+[[bin]]
+name = "onetun"
+path = "tools/onetun.rs"
