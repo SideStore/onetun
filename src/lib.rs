@@ -6,6 +6,7 @@ extern crate log;
 use std::sync::Arc;
 
 use anyhow::Context;
+use tokio::runtime::Runtime;
 
 use crate::config::{Config, PortProtocol};
 use crate::events::Bus;
@@ -25,16 +26,16 @@ pub mod virtual_device;
 pub mod virtual_iface;
 pub mod wg;
 
-pub fn blocking_start() {
-    tokio::spawn(async move {
-        start().await;
+pub async fn blocking_start(config: Config) -> anyhow::Result<(), anyhow::Error> {
+    let rt = Runtime::new()?;
+    rt.block_on(async {
+        start(config).await;
     });
+
+    Ok(())
 }
 
-pub async fn start() {
-    let config = Config::from_args()
-        .with_context(|| "Failed to read config")
-        .unwrap();
+pub async fn start(config: Config) {
     init_logger(&config).unwrap();
 
     for warning in &config.warnings {
