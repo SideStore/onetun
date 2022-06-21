@@ -27,6 +27,38 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn new(
+        port_forwards: Vec<PortForwardConfig>,
+        remote_port_forwards: Vec<PortForwardConfig>,
+        private_key: impl Into<String>,
+        endpoint_public_key: impl Into<String>,
+        endpoint_addr: SocketAddr,
+        source_peer_ip: IpAddr,
+        keepalive_seconds: Option<u16>,
+        max_transmission_unit: Option<usize>,
+        log_level: Option<String>,
+        pcap_file: Option<String>,
+    ) -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            port_forwards,
+            remote_port_forwards,
+            private_key: Arc::new(
+                parse_private_key(&private_key.into()).with_context(|| "Invalid private key")?,
+            ),
+            endpoint_public_key: Arc::new(
+                parse_public_key(Some(&endpoint_public_key.into()))
+                    .with_context(|| "Invalid public key")?,
+            ),
+            endpoint_addr,
+            source_peer_ip,
+            keepalive_seconds,
+            max_transmission_unit: max_transmission_unit.unwrap_or(1420),
+            log: log_level.unwrap_or_else(|| "info".to_string()),
+            pcap_file: pcap_file,
+            warnings: vec![],
+        })
+    }
+
     pub fn from_args() -> anyhow::Result<Self> {
         let mut warnings = vec![];
 
@@ -322,6 +354,16 @@ pub struct PortForwardConfig {
 }
 
 impl PortForwardConfig {
+    /// Creates a new PortForwardConfig
+    pub fn new(source: SocketAddr, destination: SocketAddr, protocol: PortProtocol) -> Self {
+        Self {
+            source,
+            destination,
+            protocol,
+            remote: false,
+        }
+    }
+
     /// Converts a string representation into `PortForwardConfig`.
     ///
     /// Sample formats:
