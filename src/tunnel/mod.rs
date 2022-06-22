@@ -19,7 +19,7 @@ pub async fn port_forward(
     udp_port_pool: UdpPortPool,
     wg: Arc<WireGuardTunnel>,
     bus: Bus,
-    kill_switch: broadcast::Receiver<()>,
+    mut kill_switch: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     info!(
         "Tunneling {} [{}]->[{}] (via [{}] as peer {})",
@@ -31,8 +31,24 @@ pub async fn port_forward(
     );
 
     match port_forward.protocol {
-        PortProtocol::Tcp => tcp::tcp_proxy_server(port_forward, tcp_port_pool, bus).await,
-        PortProtocol::Udp => udp::udp_proxy_server(port_forward, udp_port_pool, bus).await,
+        PortProtocol::Tcp => {
+            tokio::select! {
+                x = tcp::tcp_proxy_server(port_forward, tcp_port_pool, bus) => x,
+                _ = kill_switch.recv() => {
+                    info!("Port forwarder has been murdered");
+                    Ok(())
+                }
+            }
+        }
+        PortProtocol::Udp => {
+            tokio::select! {
+                x = udp::udp_proxy_server(port_forward, udp_port_pool, bus) => x,
+                _ = kill_switch.recv() => {
+                    info!("Port forwarder has been murdered");
+                    Ok(())
+                }
+            }
+        }
     }
 }
 
@@ -42,7 +58,7 @@ pub async fn remote_port_forward(
     udp_port_pool: UdpPortPool,
     wg: Arc<WireGuardTunnel>,
     bus: Bus,
-    kill_switch: broadcast::Receiver<()>,
+    mut kill_switch: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     info!(
         "Remote Tunneling {} [{}]<-[{}] (via [{}])",
@@ -51,6 +67,14 @@ pub async fn remote_port_forward(
 
     match port_forward.protocol {
         PortProtocol::Tcp => Ok(()), // TODO: Remote TCP forwarding
-        PortProtocol::Udp => udp::udp_proxy_server(port_forward, udp_port_pool, bus).await,
+        PortProtocol::Udp => {
+            tokio::select! {
+                x = udp::udp_proxy_server(port_forward, udp_port_pool, bus) => x,
+                _ = kill_switch.recv() => {
+                    info!("Port forwarder has been murdered");
+                    Ok(())
+                }
+            }
+        }
     }
 }
