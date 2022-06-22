@@ -1,4 +1,4 @@
-use onetun::{self, config};
+use onetun::{self, config, Handle};
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -11,23 +11,35 @@ pub extern "C" fn hello_from_rust() {
     println!("Hello from Rust!");
 }
 
-#[no_mangle]
 /// Starts the tunnel
 /// # Arguments
 /// * `pointer` - pointer to the config created with `create_wireguard_config`
 /// # Returns
-/// * `0` - on success
-pub extern "C" fn start_wireguard_tunnel(pointer: *mut config::Config) -> u8 {
+/// * The handle to the tunnel on success
+#[no_mangle]
+pub extern "C" fn start_wireguard_tunnel(pointer: *mut config::Config) -> *mut c_void {
     // Ensure the pointer is valid
     let config: Box<config::Config> = unsafe { Box::from_raw(pointer) };
 
-    match onetun::blocking_start(*config) {
-        Ok(_) => 0,
+    let handle = match onetun::blocking_start(*config) {
+        Ok(h) => h,
         Err(e) => {
-            println!("Error: {}", e);
-            1
+            return std::ptr::null_mut();
         }
-    }
+    };
+
+    Box::into_raw(Box::new(handle)) as *mut c_void
+}
+
+/// Kills the tunnel
+/// # Arguments
+/// * `pointer` - pointer to the handle created with `start_wireguard_tunnel`
+#[no_mangle]
+pub extern "C" fn kill_wireguard_tunnel(pointer: *mut Handle) {
+    // Ensure the pointer is valid
+    let handle: Box<Handle> = unsafe { Box::from_raw(pointer) };
+
+    (*handle).kill()
 }
 
 /// Creates a port forward and returns the pointer to it on success
@@ -37,10 +49,10 @@ pub extern "C" fn create_port_forward(
     source: *const c_char,
     destination: *const c_char,
     protocol: *const c_char,
-) -> u8 {
+) -> *mut c_void {
     // Check to make sure the pointers aren't null
     if source.is_null() || destination.is_null() || protocol.is_null() {
-        return 0;
+        return std::ptr::null_mut();
     }
 
     // Grab them pointers
@@ -51,39 +63,38 @@ pub extern "C" fn create_port_forward(
     // Convert the CStrings to Rust strings
     let source = match source.to_str() {
         Ok(s) => s,
-        Err(_) => return 0,
+        Err(_) => return std::ptr::null_mut(),
     };
     let destination = match destination.to_str() {
         Ok(s) => s,
-        Err(_) => return 0,
+        Err(_) => return std::ptr::null_mut(),
     };
     let protocol = match protocol.to_str() {
         Ok(s) => s,
-        Err(_) => return 0,
+        Err(_) => return std::ptr::null_mut(),
     };
 
     // Create socket addresss from the strings
     let source = match SocketAddr::from_str(source) {
         Ok(s) => s,
-        Err(_) => return 0,
+        Err(_) => return std::ptr::null_mut(),
     };
     let destination = match SocketAddr::from_str(destination) {
         Ok(s) => s,
-        Err(_) => return 0,
+        Err(_) => return std::ptr::null_mut(),
     };
 
     let protocol: config::PortProtocol = match protocol.to_uppercase().as_str() {
         "TCP" => config::PortProtocol::Tcp,
         "UDP" => config::PortProtocol::Udp,
-        _ => return 0,
+        _ => return std::ptr::null_mut(),
     };
 
     // Create the port forward
     let port_forward = config::PortForwardConfig::new(source, destination, protocol);
 
     // Return the pointer to the port forward
-    let port_forward_ptr = Box::into_raw(Box::new(port_forward));
-    port_forward_ptr as u8
+    Box::into_raw(Box::new(port_forward)) as *mut c_void
 }
 
 /// Creates a Wireguard configuration and returns the pointer to it on success
