@@ -81,7 +81,7 @@ impl VirtualInterfacePoll for TcpVirtualInterface {
     async fn poll_loop(
         self,
         device: VirtualIpDevice,
-        kill_switch: broadcast::Receiver<()>,
+        mut kill_switch: broadcast::Receiver<()>,
     ) -> anyhow::Result<()> {
         // Create CIDR block for source peer IP + each port forward IP
         let addresses = self.addresses();
@@ -236,6 +236,9 @@ impl VirtualInterfacePoll for TcpVirtualInterface {
                         }
                         _ => {}
                     }
+                }
+                _ = kill_switch.recv() => {
+                    return Ok(())
                 }
             }
         }
