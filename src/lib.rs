@@ -6,7 +6,7 @@ extern crate log;
 use std::sync::Arc;
 
 use anyhow::Context;
-use tokio::runtime::{self, Runtime};
+use tokio::runtime::{self};
 
 use crate::config::{Config, PortProtocol};
 use crate::events::Bus;
@@ -27,15 +27,12 @@ pub mod virtual_iface;
 pub mod wg;
 
 pub fn blocking_start(config: Config) -> anyhow::Result<(), anyhow::Error> {
-    println!("Blocking start");
     let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
-    println!("Created runtime");
-    rt.block_on(async {
-        println!("Inside async fn");
-        start(config).await;
+    std::thread::spawn(move || {
+        rt.block_on(async {
+            start(config).await;
+        });
     });
-
-    println!("Blocking start done");
 
     Ok(())
 }
@@ -65,21 +62,18 @@ pub async fn start(config: Config) {
         .unwrap();
     let wg = Arc::new(wg);
 
-    println!("Starting routine task");
     {
         // Start routine task for WireGuard
         let wg = wg.clone();
         tokio::spawn(async move { wg.routine_task().await });
     }
 
-    println!("Starting consume task");
     {
         // Start consumption task for WireGuard
         let wg = wg.clone();
         tokio::spawn(async move { wg.consume_task().await });
     }
 
-    println!("Starting production task");
     {
         // Start production task for WireGuard
         let wg = wg.clone();
@@ -174,6 +168,7 @@ pub async fn start(config: Config) {
                 });
             });
     }
+    println!("Survived start");
 
     futures::future::pending().await
 }
