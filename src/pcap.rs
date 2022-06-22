@@ -81,7 +81,7 @@ impl Pcap {
 pub async fn capture(
     pcap_file: String,
     bus: Bus,
-    kill_switch: broadcast::Receiver<()>,
+    mut kill_switch: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     let mut endpoint = bus.new_endpoint();
     let file = File::create(&pcap_file)
@@ -97,22 +97,29 @@ pub async fn capture(
 
     info!("Capturing WireGuard IP packets to {}", &pcap_file);
     loop {
-        match endpoint.recv().await {
-            Event::InboundInternetPacket(_proto, ip) => {
-                let instant = Instant::now();
-                writer
-                    .packet(instant, &ip)
-                    .await
-                    .with_context(|| "Failed to write inbound IP packet to pcap writer")?;
+        tokio::select! {
+            event = endpoint.recv() => {
+                match event {
+                    Event::InboundInternetPacket(_proto, ip) => {
+                        let instant = Instant::now();
+                        writer
+                            .packet(instant, &ip)
+                            .await
+                            .with_context(|| "Failed to write inbound IP packet to pcap writer")?;
+                    }
+                    Event::OutboundInternetPacket(ip) => {
+                        let instant = Instant::now();
+                        writer
+                            .packet(instant, &ip)
+                            .await
+                            .with_context(|| "Failed to write output IP packet to pcap writer")?;
+                    }
+                    _ => {}
+                }
             }
-            Event::OutboundInternetPacket(ip) => {
-                let instant = Instant::now();
-                writer
-                    .packet(instant, &ip)
-                    .await
-                    .with_context(|| "Failed to write output IP packet to pcap writer")?;
+            _ = kill_switch.recv() => {
+                return Ok(());
             }
-            _ => {}
         }
     }
 }
