@@ -1,6 +1,7 @@
 use anyhow::Context;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, SocketAddr};
+use tokio::sync::broadcast;
 
 use crate::events::Event;
 use crate::{Bus, PortProtocol};
@@ -99,7 +100,11 @@ impl UdpVirtualInterface {
 
 #[async_trait]
 impl VirtualInterfacePoll for UdpVirtualInterface {
-    async fn poll_loop(self, device: VirtualIpDevice) -> anyhow::Result<()> {
+    async fn poll_loop(
+        self,
+        device: VirtualIpDevice,
+        kill_switch: broadcast::Receiver<()>,
+    ) -> anyhow::Result<()> {
         // Create CIDR block for source peer IP + each port forward IP
         let addresses = self.addresses();
 

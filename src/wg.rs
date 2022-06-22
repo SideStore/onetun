@@ -8,7 +8,7 @@ use boringtun::noise::{Tunn, TunnResult};
 use log::Level;
 use smoltcp::wire::{IpProtocol, IpVersion, Ipv4Packet, Ipv6Packet};
 use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::config::{Config, PortProtocol};
 use crate::events::Event;
@@ -87,7 +87,7 @@ impl WireGuardTunnel {
         Ok(())
     }
 
-    pub async fn produce_task(&self) -> ! {
+    pub async fn produce_task(&self, kill_switch: broadcast::Receiver<()>) -> ! {
         trace!("Starting WireGuard production task");
         let mut endpoint = self.bus.new_endpoint();
 
@@ -104,7 +104,7 @@ impl WireGuardTunnel {
     }
 
     /// WireGuard Routine task. Handles Handshake, keep-alive, etc.
-    pub async fn routine_task(&self) -> ! {
+    pub async fn routine_task(&self, kill_switch: broadcast::Receiver<()>) -> ! {
         trace!("Starting WireGuard routine task");
 
         loop {
@@ -144,7 +144,7 @@ impl WireGuardTunnel {
 
     /// WireGuard consumption task. Receives encrypted packets from the WireGuard endpoint,
     /// decapsulates them, and dispatches newly received IP packets.
-    pub async fn consume_task(&self) -> ! {
+    pub async fn consume_task(&self, kill_switch: broadcast::Receiver<()>) -> ! {
         trace!("Starting WireGuard consumption task");
         let endpoint = self.bus.new_endpoint();
 

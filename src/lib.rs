@@ -75,25 +75,29 @@ pub async fn start(config: Config) {
     if let Some(pcap_file) = config.pcap_file.clone() {
         // Start packet capture
         let bus = bus.clone();
-        tokio::spawn(async move { pcap::capture(pcap_file, bus).await });
+        let kill_switch = handle.get_killer();
+        tokio::spawn(async move { pcap::capture(pcap_file, bus, kill_switch).await });
     }
 
     {
         // Start routine task for WireGuard
         let wg = wg.clone();
-        tokio::spawn(async move { wg.routine_task().await });
+        let kill_switch = handle.get_killer();
+        tokio::spawn(async move { wg.routine_task(kill_switch).await });
     }
 
     {
         // Start consumption task for WireGuard
         let wg = wg.clone();
-        tokio::spawn(async move { wg.consume_task().await });
+        let kill_switch = handle.get_killer();
+        tokio::spawn(async move { wg.consume_task(kill_switch).await });
     }
 
     {
         // Start production task for WireGuard
         let wg = wg.clone();
-        tokio::spawn(async move { wg.produce_task().await });
+        let kill_switch = handle.get_killer();
+        tokio::spawn(async move { wg.produce_task(kill_switch).await });
     }
 
     if config
@@ -109,7 +113,8 @@ pub async fn start(config: Config) {
         // Start TCP Virtual Interface
         let port_forwards = config.port_forwards.clone();
         let iface = TcpVirtualInterface::new(port_forwards, bus, config.source_peer_ip);
-        tokio::spawn(async move { iface.poll_loop(device).await });
+        let kill_switch = handle.get_killer();
+        tokio::spawn(async move { iface.poll_loop(device, kill_switch).await });
     }
 
     if config
@@ -135,7 +140,8 @@ pub async fn start(config: Config) {
             bus,
             config.source_peer_ip,
         );
-        tokio::spawn(async move { iface.poll_loop(device).await });
+        let kill_switch = handle.get_killer();
+        tokio::spawn(async move { iface.poll_loop(device, kill_switch).await });
     }
 
     {
@@ -151,15 +157,26 @@ pub async fn start(config: Config) {
                     tcp_port_pool.clone(),
                     udp_port_pool.clone(),
                     bus.clone(),
+                    handle.get_killer(),
                 )
             })
-            .for_each(move |(pf, wg, tcp_port_pool, udp_port_pool, bus)| {
-                tokio::spawn(async move {
-                    tunnel::port_forward(pf, source_peer_ip, tcp_port_pool, udp_port_pool, wg, bus)
+            .for_each(
+                move |(pf, wg, tcp_port_pool, udp_port_pool, bus, kill_switch)| {
+                    tokio::spawn(async move {
+                        tunnel::port_forward(
+                            pf,
+                            source_peer_ip,
+                            tcp_port_pool,
+                            udp_port_pool,
+                            wg,
+                            bus,
+                            kill_switch,
+                        )
                         .await
                         .unwrap_or_else(|e| error!("Port-forward failed for {} : {}", pf, e))
-                });
-            });
+                    });
+                },
+            );
     }
 
     {
@@ -174,15 +191,25 @@ pub async fn start(config: Config) {
                     tcp_port_pool.clone(),
                     udp_port_pool.clone(),
                     bus.clone(),
+                    handle.get_killer(),
                 )
             })
-            .for_each(move |(pf, wg, tcp_port_pool, udp_port_pool, bus)| {
-                tokio::spawn(async move {
-                    tunnel::remote_port_forward(pf, tcp_port_pool, udp_port_pool, wg, bus)
+            .for_each(
+                move |(pf, wg, tcp_port_pool, udp_port_pool, bus, kill_switch)| {
+                    tokio::spawn(async move {
+                        tunnel::remote_port_forward(
+                            pf,
+                            tcp_port_pool,
+                            udp_port_pool,
+                            wg,
+                            bus,
+                            kill_switch,
+                        )
                         .await
                         .unwrap_or_else(|e| error!("Remote port-forward failed for {} : {}", pf, e))
-                });
-            });
+                    });
+                },
+            );
     }
     println!("Survived start");
 

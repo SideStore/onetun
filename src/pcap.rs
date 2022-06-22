@@ -4,6 +4,7 @@ use anyhow::Context;
 use smoltcp::time::Instant;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::broadcast;
 
 struct Pcap {
     writer: BufWriter<File>,
@@ -77,7 +78,11 @@ impl Pcap {
 }
 
 /// Listens on the event bus for IP packets sent from and to the WireGuard tunnel.
-pub async fn capture(pcap_file: String, bus: Bus) -> anyhow::Result<()> {
+pub async fn capture(
+    pcap_file: String,
+    bus: Bus,
+    kill_switch: broadcast::Receiver<()>,
+) -> anyhow::Result<()> {
     let mut endpoint = bus.new_endpoint();
     let file = File::create(&pcap_file)
         .await

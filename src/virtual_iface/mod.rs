@@ -5,12 +5,17 @@ use crate::config::PortProtocol;
 use crate::VirtualIpDevice;
 use async_trait::async_trait;
 use std::fmt::{Display, Formatter};
+use tokio::sync::broadcast;
 
 #[async_trait]
 pub trait VirtualInterfacePoll {
     /// Initializes the virtual interface and processes incoming data to be dispatched
     /// to the WireGuard tunnel and to the real client.
-    async fn poll_loop(mut self, device: VirtualIpDevice) -> anyhow::Result<()>;
+    async fn poll_loop(
+        mut self,
+        device: VirtualIpDevice,
+        kill_switch: broadcast::Receiver<()>,
+    ) -> anyhow::Result<()>;
 }
 
 /// Virtual port.

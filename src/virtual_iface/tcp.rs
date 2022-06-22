@@ -11,6 +11,7 @@ use smoltcp::wire::{IpAddress, IpCidr};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::time::Duration;
+use tokio::sync::broadcast;
 
 const MAX_PACKET: usize = 65536;
 
@@ -77,7 +78,11 @@ impl TcpVirtualInterface {
 
 #[async_trait]
 impl VirtualInterfacePoll for TcpVirtualInterface {
-    async fn poll_loop(self, device: VirtualIpDevice) -> anyhow::Result<()> {
+    async fn poll_loop(
+        self,
+        device: VirtualIpDevice,
+        kill_switch: broadcast::Receiver<()>,
+    ) -> anyhow::Result<()> {
         // Create CIDR block for source peer IP + each port forward IP
         let addresses = self.addresses();
 

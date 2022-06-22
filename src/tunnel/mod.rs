@@ -1,6 +1,8 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use tokio::sync::broadcast;
+
 use crate::config::{PortForwardConfig, PortProtocol};
 use crate::events::Bus;
 use crate::tunnel::tcp::TcpPortPool;
@@ -17,6 +19,7 @@ pub async fn port_forward(
     udp_port_pool: UdpPortPool,
     wg: Arc<WireGuardTunnel>,
     bus: Bus,
+    kill_switch: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     info!(
         "Tunneling {} [{}]->[{}] (via [{}] as peer {})",
@@ -39,6 +42,7 @@ pub async fn remote_port_forward(
     udp_port_pool: UdpPortPool,
     wg: Arc<WireGuardTunnel>,
     bus: Bus,
+    kill_switch: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     info!(
         "Remote Tunneling {} [{}]<-[{}] (via [{}])",
