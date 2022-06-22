@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::Bus;
@@ -7,6 +8,7 @@ use boringtun::noise::{Tunn, TunnResult};
 use log::Level;
 use smoltcp::wire::{IpProtocol, IpVersion, Ipv4Packet, Ipv6Packet};
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex;
 
 use crate::config::{Config, PortProtocol};
 use crate::events::Event;
@@ -23,7 +25,7 @@ pub struct WireGuardTunnel {
     /// `boringtun` peer/tunnel implementation, used for crypto & WG protocol.
     peer: Box<Tunn>,
     /// The UDP socket for the public WireGuard endpoint to connect to.
-    udp: UdpSocket,
+    udp: Arc<Mutex<UdpSocket>>,
     /// The address of the public WireGuard endpoint (UDP).
     pub(crate) endpoint: SocketAddr,
     /// Event bus
@@ -46,7 +48,7 @@ impl WireGuardTunnel {
         Ok(Self {
             source_peer_ip,
             peer,
-            udp,
+            udp: Arc::new(Mutex::new(udp)),
             endpoint,
             bus,
         })
@@ -59,6 +61,8 @@ impl WireGuardTunnel {
         match self.peer.encapsulate(packet, &mut send_buf) {
             TunnResult::WriteToNetwork(packet) => {
                 self.udp
+                    .lock()
+                    .await
                     .send_to(packet, self.endpoint)
                     .await
                     .with_context(|| "Failed to send encrypted IP packet to WireGuard endpoint.")?;
@@ -111,7 +115,7 @@ impl WireGuardTunnel {
                         "Sending routine packet of {} bytes to WireGuard endpoint",
                         packet.len()
                     );
-                    match self.udp.send_to(packet, self.endpoint).await {
+                    match self.udp.lock().await.send_to(packet, self.endpoint).await {
                         Ok(_) => {}
                         Err(e) => {
                             error!(
@@ -148,7 +152,7 @@ impl WireGuardTunnel {
             let mut recv_buf = [0u8; MAX_PACKET];
             let mut send_buf = [0u8; MAX_PACKET];
 
-            let size = match self.udp.recv(&mut recv_buf).await {
+            let size = match self.udp.lock().await.recv(&mut recv_buf).await {
                 Ok(size) => size,
                 Err(e) => {
                     error!("Failed to read from WireGuard endpoint: {:?}", e);
@@ -161,7 +165,7 @@ impl WireGuardTunnel {
             let data = &recv_buf[..size];
             match self.peer.decapsulate(None, data, &mut send_buf) {
                 TunnResult::WriteToNetwork(packet) => {
-                    match self.udp.send_to(packet, self.endpoint).await {
+                    match self.udp.lock().await.send_to(packet, self.endpoint).await {
                         Ok(_) => {}
                         Err(e) => {
                             error!("Failed to send decapsulation-instructed packet to WireGuard endpoint: {:?}", e);
@@ -172,13 +176,18 @@ impl WireGuardTunnel {
                         let mut send_buf = [0u8; MAX_PACKET];
                         match self.peer.decapsulate(None, &[], &mut send_buf) {
                             TunnResult::WriteToNetwork(packet) => {
-                                match self.udp.send_to(packet, self.endpoint).await {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        error!("Failed to send decapsulation-instructed packet to WireGuard endpoint: {:?}", e);
-                                        break;
-                                    }
-                                };
+                                let endpoint = self.endpoint.clone();
+                                let udp = self.udp.clone();
+                                let packet = packet.to_vec();
+
+                                tokio::spawn(async move {
+                                    match udp.lock().await.send_to(&packet, endpoint).await {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            error!("Failed to send decapsulation-instructed packet to WireGuard endpoint: {:?}", e);
+                                        }
+                                    };
+                                });
                             }
                             _ => {
                                 break;

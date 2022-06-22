@@ -1,7 +1,6 @@
-use onetun::{config::Config, start};
+use onetun::{blocking_start, config::Config, start};
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let config = match Config::from_args() {
         Ok(config) => config,
         Err(e) => {
@@ -10,5 +9,5 @@ async fn main() {
         }
     };
 
-    start(config).await;
+    blocking_start(config).unwrap();
 }

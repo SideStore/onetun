@@ -6,7 +6,7 @@ extern crate log;
 use std::sync::Arc;
 
 use anyhow::Context;
-use tokio::runtime::Runtime;
+use tokio::runtime::{self, Runtime};
 
 use crate::config::{Config, PortProtocol};
 use crate::events::Bus;
@@ -26,11 +26,16 @@ pub mod virtual_device;
 pub mod virtual_iface;
 pub mod wg;
 
-pub async fn blocking_start(config: Config) -> anyhow::Result<(), anyhow::Error> {
-    let rt = Runtime::new()?;
+pub fn blocking_start(config: Config) -> anyhow::Result<(), anyhow::Error> {
+    println!("Blocking start");
+    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
+    println!("Created runtime");
     rt.block_on(async {
+        println!("Inside async fn");
         start(config).await;
     });
+
+    println!("Blocking start done");
 
     Ok(())
 }
@@ -60,18 +65,21 @@ pub async fn start(config: Config) {
         .unwrap();
     let wg = Arc::new(wg);
 
+    println!("Starting routine task");
     {
         // Start routine task for WireGuard
         let wg = wg.clone();
         tokio::spawn(async move { wg.routine_task().await });
     }
 
+    println!("Starting consume task");
     {
         // Start consumption task for WireGuard
         let wg = wg.clone();
         tokio::spawn(async move { wg.consume_task().await });
     }
 
+    println!("Starting production task");
     {
         // Start production task for WireGuard
         let wg = wg.clone();
@@ -176,4 +184,10 @@ fn init_logger(config: &Config) -> anyhow::Result<()> {
     builder
         .try_init()
         .with_context(|| "Failed to initialize logger")
+}
+
+// FFI bindings
+#[no_mangle]
+pub extern "C" fn hello_from_rust() {
+    println!("Hello from Rust!");
 }
