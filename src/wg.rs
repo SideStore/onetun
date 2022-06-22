@@ -87,28 +87,40 @@ impl WireGuardTunnel {
         Ok(())
     }
 
-    pub async fn produce_task(&self, kill_switch: broadcast::Receiver<()>) -> ! {
+    pub async fn produce_task(&self, mut kill_switch: broadcast::Receiver<()>) -> ! {
         trace!("Starting WireGuard production task");
         let mut endpoint = self.bus.new_endpoint();
 
         loop {
-            if let Event::OutboundInternetPacket(data) = endpoint.recv().await {
-                match self.send_ip_packet(&data).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("{:?}", e);
+            tokio::select! {
+                event = endpoint.recv() => {
+                    match event {
+                        Event::OutboundInternetPacket(data) => {
+                            match self.send_ip_packet(&data).await {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("{:?}", e);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
+                }
+                _ = kill_switch.recv() => {
+                    // A panic isn't pretty, but it's the best way to shut down the task with this return type.
+                    panic!("We've been ordered to die");
                 }
             }
         }
     }
 
     /// WireGuard Routine task. Handles Handshake, keep-alive, etc.
-    pub async fn routine_task(&self, kill_switch: broadcast::Receiver<()>) -> ! {
+    pub async fn routine_task(&self, mut kill_switch: broadcast::Receiver<()>) -> ! {
         trace!("Starting WireGuard routine task");
 
         loop {
             let mut send_buf = [0u8; MAX_PACKET];
+
             match self.peer.update_timers(&mut send_buf) {
                 TunnResult::WriteToNetwork(packet) => {
                     debug!(
@@ -134,6 +146,12 @@ impl WireGuardTunnel {
                 TunnResult::Done => {
                     // Sleep for a bit
                     tokio::time::sleep(Duration::from_millis(1)).await;
+                    match kill_switch.try_recv() {
+                        Ok(_) => {
+                            panic!("We've been ordered to die");
+                        }
+                        Err(_) => {}
+                    }
                 }
                 other => {
                     warn!("Unexpected WireGuard routine task state: {:?}", other);
@@ -144,7 +162,7 @@ impl WireGuardTunnel {
 
     /// WireGuard consumption task. Receives encrypted packets from the WireGuard endpoint,
     /// decapsulates them, and dispatches newly received IP packets.
-    pub async fn consume_task(&self, kill_switch: broadcast::Receiver<()>) -> ! {
+    pub async fn consume_task(&self, mut kill_switch: broadcast::Receiver<()>) -> ! {
         trace!("Starting WireGuard consumption task");
         let endpoint = self.bus.new_endpoint();
 
@@ -152,13 +170,23 @@ impl WireGuardTunnel {
             let mut recv_buf = [0u8; MAX_PACKET];
             let mut send_buf = [0u8; MAX_PACKET];
 
-            let size = match self.udp.lock().await.recv(&mut recv_buf).await {
-                Ok(size) => size,
-                Err(e) => {
-                    error!("Failed to read from WireGuard endpoint: {:?}", e);
-                    // Sleep a little bit and try again
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                    continue;
+            let lock = self.udp.lock().await;
+
+            let size = tokio::select! {
+                size = lock.recv(&mut recv_buf) => {
+                    match size {
+                        Ok(size) => size,
+                        Err(e) => {
+                            error!("Failed to read from WireGuard endpoint: {:?}", e);
+                            // Sleep a little bit and try again
+                            tokio::time::sleep(Duration::from_millis(1)).await;
+                            continue;
+                        }
+                    }
+                }
+                _ = kill_switch.recv() => {
+                    // A panic isn't pretty, but it's the best way to shut down the task with this return type.
+                    panic!("We've been ordered to die");
                 }
             };
 
