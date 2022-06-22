@@ -446,6 +446,7 @@ dependencies = [
 name = "onetun-ffi"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "onetun",
 ]
 
