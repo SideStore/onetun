@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use tokio::runtime::{self};
+use tokio::sync::broadcast;
 
 use crate::config::{Config, PortProtocol};
 use crate::events::Bus;
@@ -26,15 +27,21 @@ pub mod virtual_device;
 pub mod virtual_iface;
 pub mod wg;
 
-pub fn blocking_start(config: Config) -> anyhow::Result<(), anyhow::Error> {
-    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
-    std::thread::spawn(move || {
-        rt.block_on(async {
-            start(config).await;
-        });
-    });
+pub struct Handle {
+    kill_switch: broadcast::Sender<()>,
+    tcp_port_pool: TcpPortPool,
+    udp_port_pool: UdpPortPool,
+    wg: Arc<WireGuardTunnel>,
+    bus: Bus,
+}
 
-    Ok(())
+impl Handle {
+    pub fn get_killer(&self) -> broadcast::Receiver<()> {
+        self.kill_switch.subscribe()
+    }
+    pub fn kill(&self) {
+        self.kill_switch.send(()).unwrap();
+    }
 }
 
 pub async fn start(config: Config) {
@@ -50,17 +57,26 @@ pub async fn start(config: Config) {
 
     let bus = Bus::default();
 
-    if let Some(pcap_file) = config.pcap_file.clone() {
-        // Start packet capture
-        let bus = bus.clone();
-        tokio::spawn(async move { pcap::capture(pcap_file, bus).await });
-    }
-
     let wg = WireGuardTunnel::new(&config, bus.clone())
         .await
         .with_context(|| "Failed to initialize WireGuard tunnel")
         .unwrap();
     let wg = Arc::new(wg);
+
+    let (kill_switch, _) = broadcast::channel(1);
+    let handle = Handle {
+        kill_switch,
+        tcp_port_pool: tcp_port_pool.clone(),
+        udp_port_pool: udp_port_pool.clone(),
+        wg: wg.clone(),
+        bus: bus.clone(),
+    };
+
+    if let Some(pcap_file) = config.pcap_file.clone() {
+        // Start packet capture
+        let bus = bus.clone();
+        tokio::spawn(async move { pcap::capture(pcap_file, bus).await });
+    }
 
     {
         // Start routine task for WireGuard
@@ -173,16 +189,21 @@ pub async fn start(config: Config) {
     futures::future::pending().await
 }
 
+pub fn blocking_start(config: Config) -> anyhow::Result<(), anyhow::Error> {
+    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
+    std::thread::spawn(move || {
+        rt.block_on(async {
+            start(config).await;
+        });
+    });
+
+    Ok(())
+}
+
 fn init_logger(config: &Config) -> anyhow::Result<()> {
     let mut builder = pretty_env_logger::formatted_timed_builder();
     builder.parse_filters(&config.log);
     builder
         .try_init()
         .with_context(|| "Failed to initialize logger")
-}
-
-// FFI bindings
-#[no_mangle]
-pub extern "C" fn hello_from_rust() {
-    println!("Hello from Rust!");
 }
