@@ -4,3 +4,4 @@
 .envrc
 *.log
 *.pcap
+.DS_Store
